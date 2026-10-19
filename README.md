@@ -63,10 +63,25 @@ it can at best reproduce that rule, so its high accuracy shows it learned the qu
 that it detects autism beyond it. `graphs/aq10_score_distribution.png` shows this. Making the ML
 add real value needs data labelled by clinical diagnosis.
 
+## Data
+
+`autism_final_processed.csv` combines two public datasets from the UCI Machine Learning
+Repository, both licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/):
+
+- Thabtah, F. (2017). *Autism Screening Adult* [Dataset]. UCI Machine Learning Repository.
+  https://doi.org/10.24432/C5F019
+- Thabtah, F. (2017). *Autistic Spectrum Disorder Screening Data for Adolescent* [Dataset].
+  UCI Machine Learning Repository. https://doi.org/10.24432/C5V89T
+
+Changes from the originals: the two datasets are merged into one file with a `dataset_source`
+column and an `engineered_score` column added, columns are renamed, the label is encoded as
+0/1, and missing values are filled.
+
 ## Author
 
 **Mustafa Waheed**
 
 ## License
 
-This project is licensed under the MIT License.
+The code is licensed under the MIT License; see [LICENSE](LICENSE). The dataset is not covered
+by it and stays under CC BY 4.0 (see [Data](#data)).
