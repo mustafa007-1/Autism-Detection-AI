@@ -1,47 +1,72 @@
-# Autism-Detection
-## 📌 Project Overview
-This project is a robust machine learning pipeline designed to classify and detect patterns associated with the Autism Spectrum. Built with Python and Scikit-learn, the system processes raw autism-related datasets, trains classification models, and provides visual analytics to evaluate model performance. The final model is serialized for seamless deployment into production environments.
+# Autism Trait Screening (AQ-10)
 
-## 🚀 Key Features
-* **Automated Preprocessing:** Handles raw CSV data utilizing Pandas, applying transformations such as one-hot encoding for categorical variables.
-* **Model Training & Classification:** Leverages Scikit-learn to train high-accuracy predictive models.
-* **Visual Analytics:** Includes custom scripts to generate performance metrics and visual evaluations (e.g., confusion matrices, ROC curves).
-* **Deployment-Ready:** Serializes trained model weights using Pickle, allowing the model to be easily imported and served in web applications or APIs.
+A Streamlit app that screens for autism traits with the AQ-10 questionnaire, backed by a
+machine-learning ensemble trained on 808 AQ-10 records (704 adults, 104 adolescents aged 12–16).
 
-## 🛠️ Technology Stack
-* **Language:** Python 3.x
-* **Data Manipulation:** Pandas, NumPy
-* **Machine Learning:** Scikit-learn
-* **Model Serialization:** Pickle
-* **Data Visualization:** Matplotlib / Seaborn (via custom analytics scripts)
+> This is a screening aid, not a diagnostic tool.
 
-## 📁 Project Structure
-├── data/
-│   └── processed_autism_data.csv   # Cleaned and preprocessed dataset
-├── models/
-│   └── autism_model.pkl            # Serialized model weights saved via Pickle
-├── src/
-│   ├── preprocess.py               # Scripts for one-hot encoding and data cleaning
-│   ├── train.py                    # Model training and hyperparameter tuning
-│   └── evaluate.py                 # Visual analytics and performance metrics
-├── requirements.txt                # Python dependencies
-└── README.md
+## Setup
 
-##⚙️ Installation & Setup
-
+```bash
+py -3.13 -m venv .venv
+.venv\Scripts\activate
 pip install -r requirements.txt
-Run the preprocessing pipeline:
+```
 
-python src/preprocess.py
-Train the model:
+## Run
 
-python src/train.py
-Generate Analytics & Evaluate:
+```bash
+python train_model.py      # trains, evaluates, writes models/asd_model.joblib + models/metrics.json
+python graphs.py           # writes evaluation plots to graphs/
+streamlit run app.py       # opens the screening app
+pytest                     # runs the test suite
+```
 
-python src/evaluate.py
+## How it works
 
+| Path | Purpose |
+|---|---|
+| `asd/aq10.py` | The AQ-10 Adult and Adolescent questionnaires and their published scoring keys |
+| `asd/data.py` | Loads, validates and cleans the CSV; builds model inputs for the app with the same encoding |
+| `asd/model.py` | `AgeGroupEnsemble`: one soft-voting ensemble (logistic regression + random forest + gradient boosting) per age group, routing each person by age; the AQ-10 total is added as a feature |
+| `train_model.py` | Stratified 80/20 split, 5-fold cross-validation, held-out test metrics per age group |
+| `graphs.py` | Confusion matrices, ROC curves, permutation feature importance, AQ-10 score distribution |
+| `app.py` | The screening form |
+| `tests/` | Unit tests for scoring, data cleaning, routing, and end-to-end app tests |
 
-##👨‍💻 Author : **Mustafa Waheed**
+**Age groups.** Adults (17+) answer the self-report AQ-10 Adult; ages 12–16 get the
+parent-report AQ-10 Adolescent. These boundaries match the training data. The two
+questionnaires ask different questions, so each has its own model. The training data has no
+one under 12, so the app doesn't accept those ages.
 
-📜 License
-This project is licensed under the MIT License - see the LICENSE file for details.
+**Scoring.** Each item is answered on a 4-point scale and scores 1 point when the answer is on
+the autistic-trait side. That side is "agree" for some items and "disagree" for others; the
+direction for each item follows the published scoring key.
+
+## Results
+
+On a stratified 80/20 split (646 training rows, 162 test rows):
+
+| | Accuracy | ROC AUC |
+|---|---|---|
+| 5-fold cross-validation (training set) | 100% | 1.000 |
+| Held-out test set: adults (141) | 100% | 1.000 |
+| Held-out test set: adolescents (21) | 100% | 1.000 |
+
+Full metrics are in `models/metrics.json`; plots are in `graphs/`.
+
+## Limitation: what the model can learn
+
+In this dataset, `asd_status` is exactly "AQ-10 total score above 6" for every row; the labels
+come from the questionnaire's referral cutoff, not from clinical diagnoses. Any model trained on
+it can at best reproduce that rule, so its high accuracy shows it learned the questionnaire, not
+that it detects autism beyond it. `graphs/aq10_score_distribution.png` shows this. Making the ML
+add real value needs data labelled by clinical diagnosis.
+
+## Author
+
+**Mustafa Waheed**
+
+## License
+
+This project is licensed under the MIT License.

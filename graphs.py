@@ -1,123 +1,108 @@
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import confusion_matrix, roc_curve, auc, classification_report
-from sklearn.preprocessing import OneHotEncoder
+"""Plot evaluation graphs for the saved model on its held-out test set.
+
+Run after train_model.py:  python graphs.py   (images are written to graphs/)
+"""
+import sys
+
 import joblib
-import numpy as np
+import matplotlib
 
-# ==========================================
-# 1. SETUP & DATA PREPARATION
-# ==========================================
-print("Step 1: Loading data and recreating the test set...")
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import pandas as pd
+from sklearn.inspection import permutation_importance
+from sklearn.metrics import ConfusionMatrixDisplay, RocCurveDisplay
 
-# Load the dataset
-try:
-    df = pd.read_csv("autism_final_processed.csv")
-except FileNotFoundError:
-    print("ERROR: 'autism_final_processed.csv' not found.")
-    exit()
+from asd.aq10 import GROUPS, REFERRAL_CUTOFF
+from asd.config import DATA_PATH, GRAPHS_DIR, MODEL_PATH, RANDOM_STATE
+from asd.data import FEATURES, GROUP, SCORE_COLS, TARGET, load_dataset
 
-# Define the exact same features as used in training
-features = ['a1_score', 'a2_score', 'a3_score', 'a4_score', 'a5_score',
-            'a6_score', 'a7_score', 'a8_score', 'a9_score', 'a10_score',
-            'age', 'gender', 'ethnicity', 'jaundice', 'autism', 'used_app_before']
+LABELS = ["No ASD traits", "ASD traits"]
+# The dataset's 'autism' column means "immediate family member with autism".
+DISPLAY_NAMES = {"autism": "family_member_with_asd"}
 
-X = df[features].copy()
-y = df['asd_status']
 
-# --- PREPROCESSING (MUST MATCH TRAIN.PY EXACTLY) ---
-# Map Binary Columns
-X['gender'] = X['gender'].map({'m': 1, 'f': 0})
-X['jaundice'] = X['jaundice'].map({'yes': 1, 'no': 0})
-X['autism'] = X['autism'].map({'yes': 1, 'no': 0})
-X['used_app_before'] = X['used_app_before'].map({'yes': 1, 'no': 0})
+def save(fig, name: str):
+    path = GRAPHS_DIR / name
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Created {path}")
 
-# Encode Ethnicity
-# We load the fitted encoder to ensure categories match perfectly
-try:
-    ohe = joblib.load('onehot_encoder.pkl')
-    ethnicity_encoded = ohe.transform(X[['ethnicity']])
-except FileNotFoundError:
-    print("Warning: 'onehot_encoder.pkl' not found. Re-fitting (might differ slightly if data changed).")
-    ohe = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
-    ethnicity_encoded = ohe.fit_transform(X[['ethnicity']])
 
-ethnicity_df = pd.DataFrame(ethnicity_encoded, columns=ohe.get_feature_names_out())
+def plot_confusion_matrices(y, pred, groups):
+    fig, axes = plt.subplots(1, len(GROUPS), figsize=(11, 4.5))
+    for ax, g in zip(axes, GROUPS):
+        mask = groups == g
+        ConfusionMatrixDisplay.from_predictions(y[mask], pred[mask], labels=[0, 1], display_labels=LABELS,
+                                                cmap="Blues", colorbar=False, ax=ax)
+        ax.set_title(f"{g} (n={mask.sum()})")
+    fig.suptitle("Confusion matrix on held-out test data")
+    save(fig, "confusion_matrix.png")
 
-# Combine features
-X = pd.concat([X.drop('ethnicity', axis=1).reset_index(drop=True), ethnicity_df], axis=1)
 
-# Split Data (Using same random_state=42 ensures we get the EXACT same 'Test' set as train.py)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+def plot_roc(y, prob, groups):
+    fig, ax = plt.subplots(figsize=(7, 6))
+    RocCurveDisplay.from_predictions(y, prob, name="All", ax=ax)
+    for g in GROUPS:
+        mask = groups == g
+        RocCurveDisplay.from_predictions(y[mask], prob[mask], name=g, ax=ax)
+    ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Chance")
+    ax.set_title("ROC curve on held-out test data")
+    ax.legend(loc="lower right")
+    save(fig, "roc_curve.png")
 
-# ==========================================
-# 2. LOAD MODEL
-# ==========================================
-print("Step 2: Loading the trained model...")
-try:
-    model = joblib.load('asd_model.pkl')
-except FileNotFoundError:
-    print("ERROR: 'asd_model.pkl' not found. Run 'train.py' first!")
-    exit()
 
-# Generate Predictions
-y_pred = model.predict(X_test)
-y_prob = model.predict_proba(X_test)[:, 1]
+def plot_feature_importance(model, X, y):
+    # Permutation importance works for any model, including the voting ensemble.
+    result = permutation_importance(model, X, y, scoring="roc_auc", n_repeats=30,
+                                    random_state=RANDOM_STATE, n_jobs=-1)
+    names = [DISPLAY_NAMES.get(f, f) for f in FEATURES]
+    imp = pd.DataFrame({"feature": names, "mean": result.importances_mean, "std": result.importances_std})
+    imp = imp.sort_values("mean").tail(15)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.barh(imp["feature"], imp["mean"], xerr=imp["std"], color="#3b75af")
+    ax.set_xlabel("Drop in ROC AUC when the feature is shuffled")
+    ax.set_title("Permutation feature importance (test data)")
+    save(fig, "feature_importance.png")
 
-# ==========================================
-# 3. GENERATE PLOTS
-# ==========================================
-print("Step 3: Generating visualizations...")
 
-# --- Plot A: Confusion Matrix ---
-plt.figure(figsize=(8, 6))
-cm = confusion_matrix(y_test, y_pred)
-sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False,
-            xticklabels=['No ASD', 'ASD Traits'],
-            yticklabels=['No ASD', 'ASD Traits'])
-plt.title('Confusion Matrix: Performance on Test Data', fontsize=14)
-plt.ylabel('Actual Label', fontsize=12)
-plt.xlabel('Predicted Label', fontsize=12)
-plt.tight_layout()
-plt.savefig('confusion_matrix.png')
-print("✅ Created 'confusion_matrix.png'")
-# plt.show() # Uncomment to see on screen
+def plot_score_distribution(df):
+    totals = df[SCORE_COLS].sum(axis=1)
+    counts = pd.crosstab(totals, df[TARGET]).reindex(index=range(11), columns=[0, 1], fill_value=0)
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.bar(counts.index, counts[0], label=LABELS[0], color="#7fb3d5")
+    ax.bar(counts.index, counts[1], bottom=counts[0], label=LABELS[1], color="#c0392b")
+    ax.axvline(REFERRAL_CUTOFF + 0.5, color="black", linestyle="--", label=f"Cutoff (score > {REFERRAL_CUTOFF})")
+    ax.set_xticks(range(11))
+    ax.set_ylim(0, counts.sum(axis=1).max() * 1.15)  # headroom so the tallest bar isn't clipped
+    ax.set_xlabel("AQ-10 total score")
+    ax.set_ylabel("People")
+    ax.set_title("Labels follow the AQ-10 cutoff exactly (all data)")
+    ax.legend()
+    save(fig, "aq10_score_distribution.png")
 
-# --- Plot B: Feature Importance ---
-plt.figure(figsize=(10, 8))
-importances = model.feature_importances_
-# Get feature names from the model inputs
-feature_names = X.columns
-feat_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
-feat_df = feat_df.sort_values(by='Importance', ascending=False).head(10) # Top 10
 
-sns.barplot(x='Importance', y='Feature', data=feat_df, palette='viridis')
-plt.title('Top 10 Features Driving the Prediction', fontsize=14)
-plt.xlabel('Importance Score', fontsize=12)
-plt.ylabel('Feature', fontsize=12)
-plt.tight_layout()
-plt.savefig('feature_importance.png')
-print("✅ Created 'feature_importance.png'")
-# plt.show()
+def main():
+    if not MODEL_PATH.exists():
+        sys.exit(f"ERROR: {MODEL_PATH} not found. Run 'python train_model.py' first.")
+    bundle = joblib.load(MODEL_PATH)
+    model = bundle["model"]
 
-# --- Plot C: ROC Curve ---
-plt.figure(figsize=(8, 6))
-fpr, tpr, thresholds = roc_curve(y_test, y_prob)
-roc_auc = auc(fpr, tpr)
+    df = load_dataset(DATA_PATH)
+    test = df.iloc[bundle["test_index"]]
+    X, y = test[FEATURES], test[TARGET].to_numpy()
+    groups = test[GROUP].to_numpy()
+    prob = model.predict_proba(X)[:, 1]
+    pred = model.predict(X)
 
-plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC Curve (AUC = {roc_auc:.2f})')
-plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-plt.xlim([0.0, 1.0])
-plt.ylim([0.0, 1.05])
-plt.xlabel('False Positive Rate', fontsize=12)
-plt.ylabel('True Positive Rate', fontsize=12)
-plt.title('ROC Curve (Sensitivity vs False Alarm)', fontsize=14)
-plt.legend(loc="lower right")
-plt.tight_layout()
-plt.savefig('roc_curve.png')
-print("✅ Created 'roc_curve.png'")
-# plt.show()
+    GRAPHS_DIR.mkdir(exist_ok=True)
+    plot_confusion_matrices(y, pred, groups)
+    plot_roc(y, prob, groups)
+    plot_feature_importance(model, X, y)
+    plot_score_distribution(df)
+    print("All graphs saved.")
 
-print("\nAll visualizations saved successfully!")
+
+if __name__ == "__main__":
+    main()
